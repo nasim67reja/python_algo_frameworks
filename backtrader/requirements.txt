@@ -1,0 +1,6 @@
+pandas
+yfinance
+backtrader
+matplotlib
+python-dotenv
+binance-futures-connector
