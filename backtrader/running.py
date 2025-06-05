@@ -2,7 +2,7 @@ import backtrader as bt
 import pandas as pd
 
 data = bt.feeds.GenericCSVData(
-    dataname="data/BTCUSDT_2025-06-02_UTC_with_lookback.csv",
+    dataname="data/BTCUSDT_2025-06-04_UTC_with_lookback.csv",
     dtformat='%Y-%m-%d %H:%M:%S',
     timeframe=bt.TimeFrame.Minutes,
     compression=15,
@@ -28,41 +28,72 @@ class EmaCrossover(bt.Strategy):
         self.long_ema = bt.indicators.ExponentialMovingAverage(
             self.data.close, period=self.params.long_period)
 
-        # Use Backtrader's built-in CrossOver indicator
         self.crossover = bt.indicators.CrossOver(self.short_ema, self.long_ema)
 
-        # Initialize counters
-        self.bullish_crossovers = 0
-        self.bearish_crossovers = 0
-        self.total_crossovers = 0
+        # Simple counters
+        self.total_trades = 0
+        self.winning_trades = 0
+        self.total_pnl = 0.0
+
+        self.order = None  # To keep track of pending orders
 
     def next(self):
+        if len(self) < self.params.long_period:
+            return
 
-        if self.crossover > 0:  # Bullish crossover
-            self.bullish_crossovers += 1
-            self.total_crossovers += 1
-            print(
-                f"🟢 BULLISH CROSSOVER #{self.bullish_crossovers} on {self.data.datetime.date(0)} --- {self.short_ema[0]} vs {self.long_ema[0]}")
+        # Skip if we have pending orders
+        if self.order:
+            return
 
-        elif self.crossover < 0:  # Bearish crossover
-            self.bearish_crossovers += 1
-            self.total_crossovers += 1
+        # Get current position
+        position = self.position.size
+
+        if self.crossover < 0:
+            print(f"BEARISH CROSSOVER - Going SHORT")
+            # Calculate how many units you can afford
+            cash = self.broker.getcash()
+            price = self.data.close[0]
+            size = cash / price
+
+            print(f"Cash: ${cash:.2f}, Price: ${price:.2f}, Size: {size}")
+            self.order = self.sell(size=size)
+
+        elif self.crossover > 0 and position < 0:
+            print(f"BULLISH CROSSOVER - Closing SHORT")
+
+            # Close the entire short position
             print(
-                f"🔴 BEARISH CROSSOVER #{self.bearish_crossovers} on {self.data.datetime.date(0)}  --- {self.short_ema[0]} vs {self.long_ema[0]} ")
+                f"Current short position: {position} ---- Price: ${self.data.close[0]:.2f}")
+            self.order = self.buy(size=abs(position))
+
+            print("____________________________________")
+
+    def notify_order(self, order):
+        """Reset self.order when order completes"""
+        if order.status in [order.Completed, order.Canceled, order.Rejected]:
+            print(f"Order finished: {order.status}")
+            self.order = None  # ✅ This allows new orders to be created
 
 
 cerebro = bt.Cerebro()
 cerebro.adddata(data)
 cerebro.addstrategy(EmaCrossover)
 
+
+cerebro.broker.setcash(10000.0)
+cerebro.broker.setcommission(commission=0.001)  # 0.1% commission
+
+
+# print(f"Starting Value: ${cerebro.broker.getvalue():.2f}")
 cerebro.run()
+# print(f"Final Value: ${cerebro.broker.getvalue():.2f}")
 
 
 # Plot the results
 cerebro.plot(
     style='candlestick',  # Use candlestick chart
-    barup='green',        # Green for bullish candles
-    bardown='red',        # Red for bearish candles
+    # barup='green',        # Green for bullish candles
+    # bardown='red',        # Red for bearish candles
     volume=True,          # Show volume subplot
     plotdist=0.1,         # Distance between plots
     figsize=(15, 8)       # Figure size (width, height)
